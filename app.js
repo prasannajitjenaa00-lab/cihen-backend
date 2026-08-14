@@ -16,6 +16,9 @@ const settingsRoutes = require('./routes/settingsRoutes');
 
 const app = express();
 
+// Trust proxy for platforms like Render/Heroku behind a reverse proxy
+app.set('trust proxy', 1);
+
 // Security Middlewares
 app.use(helmet());
 app.use(cors({

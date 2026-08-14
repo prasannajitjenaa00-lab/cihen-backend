@@ -129,7 +129,7 @@ const seedData = async () => {
     for (let i = 0; i < mockLeadsData.length; i++) {
       const data = mockLeadsData[i];
       const assignedCounsellor = counsellors[i % counsellors.length];
-      
+
       // Distribute statuses realistically
       let status = 'New';
       if (i >= 4 && i < 8) status = 'Contacted';
@@ -192,7 +192,7 @@ const seedData = async () => {
 
     // Filter leads on 'Follow-up' status or others
     const followLeads = leads.filter(l => ['Follow-up', 'Visit Scheduled', 'Interested'].includes(l.status));
-    
+
     for (let i = 0; i < 10 && i < followLeads.length; i++) {
       const lead = followLeads[i];
       const isToday = i < 3;
