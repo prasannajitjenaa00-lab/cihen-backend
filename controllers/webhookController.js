@@ -52,10 +52,13 @@ exports.verifyMetaWebhook = async (req, res) => {
     // Retrieve active verify token ONLY from environment variable
     const configToken = process.env.META_VERIFY_TOKEN || 'cohen_verify_token_2026';
 
+    console.log(`Webhook verification attempt: mode=${mode}, receivedToken=${token}, expectedToken=${configToken}`);
+
     if (mode === 'subscribe' && token === configToken) {
       console.log('Meta Webhook Verified.');
       res.status(200).send(challenge);
     } else {
+      console.warn(`Webhook verification failed. Mode: ${mode}, Token mismatch: received='${token}', expected='${configToken}'`);
       res.status(403).json({ success: false, message: 'Verification failed' });
     }
   } catch (error) {
