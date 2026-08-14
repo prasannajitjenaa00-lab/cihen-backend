@@ -1,0 +1,566 @@
+const Lead = require('../models/Lead');
+const User = require('../models/User');
+const Note = require('../models/Note');
+const Call = require('../models/Call');
+const FollowUp = require('../models/FollowUp');
+const Timeline = require('../models/Timeline');
+const Notification = require('../models/Notification');
+const AuditLog = require('../models/AuditLog');
+const { createProcessedLead } = require('../services/leadService');
+
+// @desc    Get all leads with search, filters, pagination, and sorting
+// @route   GET /api/leads
+// @access  Private
+exports.getLeads = async (req, res) => {
+  try {
+    let query = {};
+
+    // 1. Role-based restrictions: Counsellors can only see assigned leads
+    if (req.user.role === 'Counsellor') {
+      query.assignedCounsellor = req.user.id;
+    }
+
+    // 2. Search (Student Name, Parent Name, Phone, Email, Lead ID)
+    if (req.query.search) {
+      const searchRegex = new RegExp(req.query.search, 'i');
+      query.$or = [
+        { studentName: searchRegex },
+        { parentName: searchRegex },
+        { phone: searchRegex },
+        { email: searchRegex },
+        { leadId: searchRegex }
+      ];
+    }
+
+    // 3. Filters
+    if (req.query.status) {
+      query.status = req.query.status;
+    }
+    if (req.query.leadSource) {
+      query.leadSource = req.query.leadSource;
+    }
+    if (req.query.priority) {
+      query.priority = req.query.priority;
+    }
+    if (req.query.assignedCounsellor) {
+      query.assignedCounsellor = req.query.assignedCounsellor;
+    }
+    if (req.query.campaign) {
+      query.campaign = new RegExp(req.query.campaign, 'i');
+    }
+    if (req.query.classInterested) {
+      query.classInterested = req.query.classInterested;
+    }
+    if (req.query.duplicateStatus) {
+      query.duplicateStatus = req.query.duplicateStatus;
+    }
+
+    // Date filters (createdAt range)
+    if (req.query.startDate && req.query.endDate) {
+      query.createdAt = {
+        $gte: new Date(req.query.startDate),
+        $lte: new Date(req.query.endDate)
+      };
+    }
+
+    // 4. Execution logic: handling export vs pagination
+    const isExport = req.query.export === 'true';
+
+    // Sorting
+    let sortBy = '-createdAt';
+    if (req.query.sort) {
+      sortBy = req.query.sort;
+    }
+
+    if (isExport) {
+      const leads = await Lead.find(query)
+        .sort(sortBy)
+        .populate('assignedCounsellor', 'name email');
+      return res.status(200).json({ success: true, count: leads.length, data: leads });
+    }
+
+    // Pagination
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 10;
+    const startIndex = (page - 1) * limit;
+    const total = await Lead.countDocuments(query);
+
+    const leads = await Lead.find(query)
+      .sort(sortBy)
+      .skip(startIndex)
+      .limit(limit)
+      .populate('assignedCounsellor', 'name email');
+
+    res.status(200).json({
+      success: true,
+      count: leads.length,
+      pagination: {
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+        total
+      },
+      data: leads
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// @desc    Get a single lead details (with full activities timeline)
+// @route   GET /api/leads/:id
+// @access  Private
+exports.getLead = async (req, res) => {
+  try {
+    const lead = await Lead.findById(req.params.id)
+      .populate('assignedCounsellor', 'name email')
+      .populate('duplicateOf', 'leadId studentName parentName status');
+
+    if (!lead) {
+      return res.status(404).json({ success: false, message: 'Lead not found' });
+    }
+
+    // Role-based authorization
+    if (req.user.role === 'Counsellor' && lead.assignedCounsellor?.toString() !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'Not authorized to view this lead' });
+    }
+
+    // Fetch related records in parallel
+    const [notes, calls, followUps, timeline] = await Promise.all([
+      Note.find({ lead: lead._id }).populate('createdBy', 'name role').sort({ createdAt: -1 }),
+      Call.find({ lead: lead._id }).populate('counsellor', 'name').sort({ createdAt: -1 }),
+      FollowUp.find({ lead: lead._id }).populate('counsellor', 'name').sort({ date: -1, time: -1 }),
+      Timeline.find({ lead: lead._id }).populate('user', 'name role').sort({ createdAt: -1 })
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        lead,
+        notes,
+        calls,
+        followUps,
+        timeline
+      }
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// @desc    Create a lead manually
+// @route   POST /api/leads
+// @access  Private
+exports.createLead = async (req, res) => {
+  try {
+    // Force lead source to Manual if not specified, and set platform
+    const leadData = {
+      ...req.body,
+      leadSource: req.body.leadSource || 'Manual',
+      platform: req.body.platform || 'manual'
+    };
+
+    const lead = await createProcessedLead(leadData, req.user);
+
+    res.status(201).json({
+      success: true,
+      message: 'Lead created successfully',
+      data: lead
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: error.message || 'Server error' });
+  }
+};
+
+// @desc    Update lead information
+// @route   PUT /api/leads/:id
+// @access  Private
+exports.updateLead = async (req, res) => {
+  try {
+    let lead = await Lead.findById(req.params.id);
+
+    if (!lead) {
+      return res.status(404).json({ success: false, message: 'Lead not found' });
+    }
+
+    // Role-based authorization
+    if (req.user.role === 'Counsellor' && lead.assignedCounsellor?.toString() !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'Not authorized to edit this lead' });
+    }
+
+    // Track status change for timeline
+    const oldStatus = lead.status;
+    const newStatus = req.body.status;
+
+    // Update fields
+    lead = await Lead.findByIdAndUpdate(req.params.id, req.body, {
+      new: true,
+      runValidators: true
+    });
+
+    if (newStatus && oldStatus !== newStatus) {
+      await Timeline.create({
+        lead: lead._id,
+        eventType: 'StatusChange',
+        message: `Status updated from "${oldStatus}" to "${newStatus}"`,
+        user: req.user.id
+      });
+
+      // Audit status change
+      await AuditLog.create({
+        user: req.user.id,
+        action: 'Status Changed',
+        entity: 'Lead',
+        entityId: lead._id.toString(),
+        details: `Status changed from "${oldStatus}" to "${newStatus}"`
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Lead updated successfully',
+      data: lead
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// @desc    Delete a lead
+// @route   DELETE /api/leads/:id
+// @access  Private/Super Admin
+exports.deleteLead = async (req, res) => {
+  try {
+    const lead = await Lead.findById(req.params.id);
+
+    if (!lead) {
+      return res.status(404).json({ success: false, message: 'Lead not found' });
+    }
+
+    await Lead.findByIdAndDelete(req.params.id);
+
+    // Delete related records
+    await Promise.all([
+      Note.deleteMany({ lead: req.params.id }),
+      Call.deleteMany({ lead: req.params.id }),
+      FollowUp.deleteMany({ lead: req.params.id }),
+      Timeline.deleteMany({ lead: req.params.id })
+    ]);
+
+    await AuditLog.create({
+      user: req.user.id,
+      action: 'Lead Deleted',
+      entity: 'Lead',
+      entityId: req.params.id,
+      details: `Lead ${lead.leadId} (${lead.studentName}) deleted along with related files`
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Lead deleted successfully'
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// @desc    Assign a lead to a counsellor
+// @route   POST /api/leads/:id/assign
+// @access  Private/Admin, Super Admin
+exports.assignLead = async (req, res) => {
+  try {
+    const lead = await Lead.findById(req.params.id);
+    if (!lead) {
+      return res.status(404).json({ success: false, message: 'Lead not found' });
+    }
+
+    const { counsellorId } = req.body;
+    if (!counsellorId) {
+      return res.status(400).json({ success: false, message: 'Please specify a counsellor ID' });
+    }
+
+    const counsellor = await User.findById(counsellorId);
+    if (!counsellor || counsellor.role !== 'Counsellor') {
+      return res.status(400).json({ success: false, message: 'Invalid counsellor ID' });
+    }
+
+    const oldCounsellor = lead.assignedCounsellor
+      ? await User.findById(lead.assignedCounsellor)
+      : null;
+
+    lead.assignedCounsellor = counsellorId;
+    await lead.save();
+
+    const assignmentMsg = oldCounsellor
+      ? `Lead re-assigned from ${oldCounsellor.name} to ${counsellor.name}`
+      : `Lead assigned to ${counsellor.name}`;
+
+    await Timeline.create({
+      lead: lead._id,
+      eventType: 'Assigned',
+      message: assignmentMsg,
+      user: req.user.id
+    });
+
+    await Notification.create({
+      user: counsellor._id,
+      type: 'LEAD_ASSIGNED',
+      message: `Lead ${lead.leadId} (${lead.studentName}) has been assigned to you`,
+      lead: lead._id
+    });
+
+    await AuditLog.create({
+      user: req.user.id,
+      action: 'Lead Assigned',
+      entity: 'Lead',
+      entityId: lead._id.toString(),
+      details: assignmentMsg
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Lead assigned successfully',
+      data: lead
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// @desc    Add a note to a lead
+// @route   POST /api/leads/:id/notes
+// @access  Private
+exports.addNote = async (req, res) => {
+  try {
+    const lead = await Lead.findById(req.params.id);
+    if (!lead) {
+      return res.status(404).json({ success: false, message: 'Lead not found' });
+    }
+
+    const { text } = req.body;
+    if (!text) {
+      return res.status(400).json({ success: false, message: 'Please enter note text' });
+    }
+
+    const note = await Note.create({
+      lead: lead._id,
+      text,
+      createdBy: req.user.id
+    });
+
+    await Timeline.create({
+      lead: lead._id,
+      eventType: 'NoteAdded',
+      message: `Note added: "${text.substring(0, 60)}${text.length > 60 ? '...' : ''}"`,
+      user: req.user.id
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Note added successfully',
+      data: note
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// @desc    Schedule a follow-up for a lead
+// @route   POST /api/leads/:id/followups
+// @access  Private
+exports.scheduleFollowUp = async (req, res) => {
+  try {
+    const lead = await Lead.findById(req.params.id);
+    if (!lead) {
+      return res.status(404).json({ success: false, message: 'Lead not found' });
+    }
+
+    const { date, time, type, notes } = req.body;
+    if (!date || !time || !type) {
+      return res.status(400).json({ success: false, message: 'Date, time, and type are required' });
+    }
+
+    const followUp = await FollowUp.create({
+      lead: lead._id,
+      counsellor: req.user.id,
+      date: new Date(date),
+      time,
+      type,
+      notes
+    });
+
+    // Update lead follow-up date & status
+    lead.nextFollowUp = new Date(date);
+    lead.status = 'Follow-up';
+    await lead.save();
+
+    await Timeline.create({
+      lead: lead._id,
+      eventType: 'FollowUpCreated',
+      message: `Follow-up (${type}) scheduled for ${date} at ${time}`,
+      user: req.user.id
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Follow-up scheduled successfully',
+      data: followUp
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// @desc    Log a call outcome
+// @route   POST /api/leads/:id/calls
+// @access  Private
+exports.logCall = async (req, res) => {
+  try {
+    const lead = await Lead.findById(req.params.id);
+    if (!lead) {
+      return res.status(404).json({ success: false, message: 'Lead not found' });
+    }
+
+    const { outcome, notes, callTime } = req.body;
+    if (!outcome) {
+      return res.status(400).json({ success: false, message: 'Call outcome is required' });
+    }
+
+    const call = await Call.create({
+      lead: lead._id,
+      counsellor: req.user.id,
+      callDate: new Date(),
+      callTime: callTime || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      outcome,
+      notes
+    });
+
+    // Update Lead contact metadata
+    lead.lastContactDate = new Date();
+    lead.status = 'Contacted';
+    await lead.save();
+
+    await Timeline.create({
+      lead: lead._id,
+      eventType: 'CallLogged',
+      message: `Call logged: ${outcome}. Notes: ${notes || 'None'}`,
+      user: req.user.id
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Call logged successfully',
+      data: call
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// @desc    Resolve a possible duplicate (merge or ignore)
+// @route   POST /api/leads/:id/resolve-duplicate
+// @access  Private/Admin, Super Admin
+exports.resolveDuplicate = async (req, res) => {
+  try {
+    const lead = await Lead.findById(req.params.id);
+    if (!lead) {
+      return res.status(404).json({ success: false, message: 'Lead not found' });
+    }
+
+    const { resolution } = req.body; // 'merge' or 'ignore'
+
+    if (!resolution || !['merge', 'ignore'].includes(resolution)) {
+      return res.status(400).json({ success: false, message: 'Resolution must be either "merge" or "ignore"' });
+    }
+
+    if (resolution === 'ignore') {
+      lead.duplicateStatus = 'Resolved';
+      await lead.save();
+
+      await Timeline.create({
+        lead: lead._id,
+        eventType: 'DuplicateCheck',
+        message: 'Duplicate flag ignored and resolved.',
+        user: req.user.id
+      });
+    } else if (resolution === 'merge') {
+      if (!lead.duplicateOf) {
+        return res.status(400).json({ success: false, message: 'No target duplicate lead to merge with' });
+      }
+
+      const targetLead = await Lead.findById(lead.duplicateOf);
+      if (targetLead) {
+        // Merge notes
+        const notesToMerge = await Note.find({ lead: lead._id });
+        for (const note of notesToMerge) {
+          note.lead = targetLead._id;
+          await note.save();
+        }
+
+        // Merge calls
+        const callsToMerge = await Call.find({ lead: lead._id });
+        for (const call of callsToMerge) {
+          call.lead = targetLead._id;
+          await call.save();
+        }
+
+        // Merge follow-ups
+        const followUpsToMerge = await FollowUp.find({ lead: lead._id });
+        for (const f of followUpsToMerge) {
+          f.lead = targetLead._id;
+          await f.save();
+        }
+
+        // Merge timeline entries
+        const timelineToMerge = await Timeline.find({ lead: lead._id });
+        for (const t of timelineToMerge) {
+          t.lead = targetLead._id;
+          await t.save();
+        }
+
+        // Append a timeline event to target
+        await Timeline.create({
+          lead: targetLead._id,
+          eventType: 'DuplicateCheck',
+          message: `Lead ${lead.leadId} (${lead.studentName}) merged into this lead`,
+          user: req.user.id
+        });
+
+        // Delete this lead
+        await Lead.findByIdAndDelete(lead._id);
+
+        await AuditLog.create({
+          user: req.user.id,
+          action: 'Lead Merged',
+          entity: 'Lead',
+          entityId: targetLead._id.toString(),
+          details: `Merged lead ${lead.leadId} into ${targetLead.leadId}`
+        });
+
+        return res.status(200).json({
+          success: true,
+          message: 'Leads merged successfully',
+          data: targetLead
+        });
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Duplicate resolution updated successfully',
+      data: lead
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
