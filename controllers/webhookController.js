@@ -16,7 +16,10 @@ const processMetaLeadInBackground = async (logId, leadId, pageId, formId) => {
     await logEntry.save();
 
     const accessToken = process.env.META_ACCESS_TOKEN || 'mock_token';
+
+    console.log("🔎 FETCHING META LEAD", leadId);
     const rawLeadData = await metaService.getLeadById(leadId, accessToken);
+    console.log("✅ META LEAD FETCHED", leadId);
 
     // Extract fields using default mapping
     const crmFieldData = metaService.mapLeadFields(rawLeadData);
@@ -33,6 +36,7 @@ const processMetaLeadInBackground = async (logId, leadId, pageId, formId) => {
     logEntry.processedAt = new Date();
     await logEntry.save();
   } catch (error) {
+    console.error("❌ META LEAD FETCH FAILED", error);
     console.error(`Error processing Meta Lead: ${error.message}`);
     logEntry.status = 'Failed';
     logEntry.error = error.message;
@@ -72,9 +76,15 @@ exports.verifyMetaWebhook = async (req, res) => {
 // @access  Public
 exports.receiveMetaWebhook = async (req, res) => {
   try {
+    console.log("🔥 META POST RECEIVED", {
+      body: req.body,
+      signature: req.headers["x-hub-signature-256"]
+    });
+
     const body = req.body;
 
     // Validate Signature if App Secret is configured in environment
+    console.log("🔐 Checking Meta webhook signature");
     const appSecret = process.env.META_APP_SECRET;
     if (appSecret && req.headers['x-hub-signature-256']) {
       const signature = req.headers['x-hub-signature-256'];
@@ -86,9 +96,11 @@ exports.receiveMetaWebhook = async (req, res) => {
           .digest('hex');
         
         if (parts[1] !== expectedSignature) {
+          console.error("❌ META WEBHOOK SIGNATURE MISMATCH");
           console.warn('Meta Webhook signature validation failed.');
           return res.status(401).send('Signature verification failed');
         }
+        console.log("✅ META WEBHOOK SIGNATURE VALID");
       }
     }
 
@@ -105,6 +117,11 @@ exports.receiveMetaWebhook = async (req, res) => {
             const leadgenId = change.value.leadgen_id;
             const formId = change.value.form_id;
             const pageId = change.value.page_id;
+
+            console.log("📥 META LEADGEN EVENT", {
+              leadgenId,
+              pageId: change.value?.page_id
+            });
 
             // Check if log already exists (idempotency check)
             const existingLog = await MetaWebhookLog.findOne({ eventId: leadgenId });
