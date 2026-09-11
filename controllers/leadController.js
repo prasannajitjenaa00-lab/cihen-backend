@@ -271,9 +271,9 @@ exports.deleteLead = async (req, res) => {
   }
 };
 
-// @desc    Assign a lead to a counsellor
+// @desc    Assign or reassign a lead to a staff member (Senior Zonal Manager, Counsellor, Admissions Officer, etc.)
 // @route   POST /api/leads/:id/assign
-// @access  Private/Admin, Super Admin
+// @access  Private/Super Admin, Admin, CGO
 exports.assignLead = async (req, res) => {
   try {
     const lead = await Lead.findById(req.params.id);
@@ -281,26 +281,38 @@ exports.assignLead = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Lead not found' });
     }
 
-    const { counsellorId } = req.body;
-    if (!counsellorId) {
-      return res.status(400).json({ success: false, message: 'Please specify a counsellor ID' });
+    const staffId = req.body.targetStaffId || req.body.counsellorId;
+    if (!staffId) {
+      return res.status(400).json({ success: false, message: 'Please specify targetStaffId or counsellorId' });
     }
 
-    const counsellor = await User.findById(counsellorId);
-    if (!counsellor || counsellor.role !== 'Counsellor') {
-      return res.status(400).json({ success: false, message: 'Invalid counsellor ID' });
+    const targetStaff = await User.findById(staffId);
+    if (!targetStaff || !targetStaff.isActive || targetStaff.status === 'Inactive') {
+      return res.status(400).json({ success: false, message: 'Invalid or inactive staff member' });
     }
 
-    const oldCounsellor = lead.assignedCounsellor
+    const permittedRoles = ['Counsellor', 'Admission Staff', 'Senior Zonal Manager', 'Admissions Officer', 'Admin'];
+    const isPermitted = permittedRoles.includes(targetStaff.role) ||
+      /counsellor|zonal|admission|manager|officer|advisor/i.test(targetStaff.designation || '') ||
+      /counsellor|zonal|admission|manager|officer|advisor/i.test(targetStaff.role || '');
+
+    if (!isPermitted || targetStaff.role === 'SUPER_USER') {
+      return res.status(400).json({ success: false, message: 'Leads cannot be assigned to this staff role' });
+    }
+
+    const oldStaff = lead.assignedCounsellor
       ? await User.findById(lead.assignedCounsellor)
       : null;
 
-    lead.assignedCounsellor = counsellorId;
+    lead.assignedCounsellor = targetStaff._id;
     await lead.save();
 
-    const assignmentMsg = oldCounsellor
-      ? `Lead re-assigned from ${oldCounsellor.name} to ${counsellor.name}`
-      : `Lead assigned to ${counsellor.name}`;
+    const staffLabel = `${targetStaff.name}${targetStaff.designation ? ` (${targetStaff.designation})` : ` (${targetStaff.role})`}`;
+    const oldStaffLabel = oldStaff ? `${oldStaff.name}${oldStaff.designation ? ` (${oldStaff.designation})` : ` (${oldStaff.role})`}` : null;
+
+    const assignmentMsg = oldStaff
+      ? `Lead re-assigned from ${oldStaffLabel} to ${staffLabel} by ${req.user.name}`
+      : `Lead assigned to ${staffLabel} by ${req.user.name}`;
 
     await Timeline.create({
       lead: lead._id,
@@ -310,9 +322,9 @@ exports.assignLead = async (req, res) => {
     });
 
     await Notification.create({
-      user: counsellor._id,
+      user: targetStaff._id,
       type: 'LEAD_ASSIGNED',
-      message: `Lead ${lead.leadId} (${lead.studentName}) has been assigned to you`,
+      message: `Lead ${lead.leadId} (${lead.studentName}) has been allocated to you`,
       lead: lead._id
     });
 
@@ -332,6 +344,93 @@ exports.assignLead = async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// @desc    Bulk allocate leads to a staff member (Senior Zonal Manager, Counsellor, Admissions Officer, etc.)
+// @route   POST /api/leads/bulk-assign
+// @access  Private/Super Admin, Admin, CGO
+exports.bulkAssignLeads = async (req, res) => {
+  try {
+    const { leadIds, targetStaffId } = req.body;
+
+    if (!leadIds || !Array.isArray(leadIds) || leadIds.length === 0) {
+      return res.status(400).json({ success: false, message: 'Please provide an array of lead IDs to allocate' });
+    }
+
+    if (!targetStaffId) {
+      return res.status(400).json({ success: false, message: 'Please specify targetStaffId' });
+    }
+
+    const targetStaff = await User.findById(targetStaffId);
+    if (!targetStaff || !targetStaff.isActive || targetStaff.status === 'Inactive') {
+      return res.status(400).json({ success: false, message: 'Invalid or inactive target staff member' });
+    }
+
+    const permittedRoles = ['Counsellor', 'Admission Staff', 'Senior Zonal Manager', 'Admissions Officer', 'Admin'];
+    const isPermitted = permittedRoles.includes(targetStaff.role) ||
+      /counsellor|zonal|admission|manager|officer|advisor/i.test(targetStaff.designation || '') ||
+      /counsellor|zonal|admission|manager|officer|advisor/i.test(targetStaff.role || '');
+
+    if (!isPermitted || targetStaff.role === 'SUPER_USER') {
+      return res.status(400).json({ success: false, message: 'Leads cannot be allocated to this staff role' });
+    }
+
+    const leads = await Lead.find({ _id: { $in: leadIds } });
+    if (!leads || leads.length === 0) {
+      return res.status(404).json({ success: false, message: 'No matching leads found to allocate' });
+    }
+
+    const staffDisplayName = `${targetStaff.name}${targetStaff.designation ? ` (${targetStaff.designation})` : ` (${targetStaff.role})`}`;
+
+    // Update leads
+    await Lead.updateMany(
+      { _id: { $in: leadIds } },
+      { $set: { assignedCounsellor: targetStaff._id } }
+    );
+
+    // Create Timeline events for updated leads
+    const timelineDocs = leads.map(l => ({
+      lead: l._id,
+      eventType: 'Assigned',
+      message: `Lead bulk-allocated to ${staffDisplayName} by ${req.user.name} (${req.user.role})`,
+      user: req.user.id
+    }));
+    await Timeline.insertMany(timelineDocs);
+
+    // Send single notification to target staff
+    await Notification.create({
+      user: targetStaff._id,
+      type: 'LEAD_ASSIGNED',
+      message: `${leads.length} leads have been allocated to you by ${req.user.name} (${req.user.role})`
+    });
+
+    // Create Audit Log
+    await AuditLog.create({
+      user: req.user.id,
+      action: 'Bulk Leads Allocated',
+      entity: 'Lead',
+      entityId: leadIds[0].toString(),
+      details: `${leads.length} leads bulk-allocated to ${staffDisplayName}`
+    });
+
+    res.status(200).json({
+      success: true,
+      count: leads.length,
+      message: `Successfully allocated ${leads.length} leads to ${staffDisplayName}`,
+      data: {
+        allocatedCount: leads.length,
+        targetStaff: {
+          id: targetStaff._id,
+          name: targetStaff.name,
+          role: targetStaff.role,
+          designation: targetStaff.designation
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Bulk allocate error:', error);
+    res.status(500).json({ success: false, message: 'Server error during bulk lead allocation' });
   }
 };
 

@@ -7,7 +7,8 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "seed": "node utils/seed.js",
-    "seed:superusers": "node utils/seedSuperUsers.js"
+    "seed:superusers": "node utils/seedSuperUsers.js",
+    "seed:cgo": "node utils/seedCGO.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

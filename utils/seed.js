@@ -13,6 +13,7 @@ const CRMSettings = require('../models/CRMSettings');
 const MetaWebhookLog = require('../models/MetaWebhookLog');
 const AuditLog = require('../models/AuditLog');
 const seedSuperUsers = require('./seedSuperUsers');
+const seedCGO = require('./seedCGO');
 
 const seedData = async () => {
   try {
@@ -21,10 +22,10 @@ const seedData = async () => {
     await mongoose.connect(connString);
     console.log('Connected.');
 
-    // Clear existing data (Preserve SUPER_USER accounts and their passwords)
-    console.log('Clearing existing database collections (preserving SUPER_USER accounts)...');
+    // Clear existing data (Preserve SUPER_USER and CGO accounts and their passwords)
+    console.log('Clearing existing database collections (preserving SUPER_USER and CGO accounts)...');
     await Promise.all([
-      User.deleteMany({ role: { $ne: 'SUPER_USER' } }),
+      User.deleteMany({ role: { $nin: ['SUPER_USER', 'CGO'] } }),
       Lead.deleteMany(),
       FollowUp.deleteMany(),
       Call.deleteMany(),
@@ -85,6 +86,7 @@ const seedData = async () => {
 
     console.log('Staff accounts created.');
     await seedSuperUsers();
+    await seedCGO();
 
     // Create default CRM Settings
     console.log('Seeding initial configurations...');
