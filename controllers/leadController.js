@@ -14,22 +14,38 @@ const { createProcessedLead } = require('../services/leadService');
 exports.getLeads = async (req, res) => {
   try {
     let query = {};
+    const andConditions = [];
 
-    // 1. Role-based restrictions: Counsellors can only see assigned leads
+    // 1. Role-based restrictions:
+    // Counsellors can only see assigned leads
     if (req.user.role === 'Counsellor') {
-      query.assignedCounsellor = req.user.id;
+      andConditions.push({ assignedCounsellor: req.user.id });
+    } else if (req.user.role === 'Senior Zonal Manager') {
+      // Senior Zonal Managers strictly see only leads assigned to them OR created by them
+      andConditions.push({
+        $or: [
+          { assignedCounsellor: req.user.id },
+          { createdBy: req.user.id }
+        ]
+      });
     }
 
     // 2. Search (Student Name, Parent Name, Phone, Email, Lead ID)
     if (req.query.search) {
       const searchRegex = new RegExp(req.query.search, 'i');
-      query.$or = [
-        { studentName: searchRegex },
-        { parentName: searchRegex },
-        { phone: searchRegex },
-        { email: searchRegex },
-        { leadId: searchRegex }
-      ];
+      andConditions.push({
+        $or: [
+          { studentName: searchRegex },
+          { parentName: searchRegex },
+          { phone: searchRegex },
+          { email: searchRegex },
+          { leadId: searchRegex }
+        ]
+      });
+    }
+
+    if (andConditions.length > 0) {
+      query.$and = andConditions;
     }
 
     // 3. Filters
@@ -42,7 +58,8 @@ exports.getLeads = async (req, res) => {
     if (req.query.priority) {
       query.priority = req.query.priority;
     }
-    if (req.query.assignedCounsellor) {
+    // Only apply assignedCounsellor query filter if user is not Senior Zonal Manager or Counsellor
+    if (req.query.assignedCounsellor && req.user.role !== 'Counsellor' && req.user.role !== 'Senior Zonal Manager') {
       query.assignedCounsellor = req.query.assignedCounsellor;
     }
     if (req.query.campaign) {
@@ -75,7 +92,8 @@ exports.getLeads = async (req, res) => {
     if (isExport) {
       const leads = await Lead.find(query)
         .sort(sortBy)
-        .populate('assignedCounsellor', 'name email');
+        .populate('assignedCounsellor', 'name email role designation')
+        .populate('createdBy', 'name email role designation');
       return res.status(200).json({ success: true, count: leads.length, data: leads });
     }
 
@@ -89,7 +107,8 @@ exports.getLeads = async (req, res) => {
       .sort(sortBy)
       .skip(startIndex)
       .limit(limit)
-      .populate('assignedCounsellor', 'name email');
+      .populate('assignedCounsellor', 'name email role designation')
+      .populate('createdBy', 'name email role designation');
 
     res.status(200).json({
       success: true,
@@ -114,7 +133,8 @@ exports.getLeads = async (req, res) => {
 exports.getLead = async (req, res) => {
   try {
     const lead = await Lead.findById(req.params.id)
-      .populate('assignedCounsellor', 'name email')
+      .populate('assignedCounsellor', 'name email role designation')
+      .populate('createdBy', 'name email role designation')
       .populate('duplicateOf', 'leadId studentName parentName status');
 
     if (!lead) {
@@ -122,9 +142,19 @@ exports.getLead = async (req, res) => {
     }
 
     // Role-based authorization
-    const counsellorId = lead.assignedCounsellor?._id || lead.assignedCounsellor;
-    if (req.user.role === 'Counsellor' && counsellorId?.toString() !== req.user.id) {
+    const counsellorId = lead.assignedCounsellor?._id?.toString() || lead.assignedCounsellor?.toString();
+    const createdById = lead.createdBy?._id?.toString() || lead.createdBy?.toString();
+
+    if (req.user.role === 'Counsellor' && counsellorId !== req.user.id) {
       return res.status(403).json({ success: false, message: 'Not authorized to view this lead' });
+    }
+
+    if (req.user.role === 'Senior Zonal Manager') {
+      const isAssigned = counsellorId === req.user.id;
+      const isCreator = createdById === req.user.id;
+      if (!isAssigned && !isCreator) {
+        return res.status(403).json({ success: false, message: 'Not authorized to view this lead' });
+      }
     }
 
     // Fetch related records in parallel
@@ -163,6 +193,16 @@ exports.createLead = async (req, res) => {
       platform: req.body.platform || 'manual'
     };
 
+    // Automatically set createdBy on server; strip client-provided createdBy
+    delete leadData.createdBy;
+
+    // Senior Zonal Manager cannot assign leads during creation
+    if (req.user.role === 'Senior Zonal Manager') {
+      delete leadData.assignedCounsellor;
+      delete leadData.targetStaffId;
+      delete leadData.counsellorId;
+    }
+
     const lead = await createProcessedLead(leadData, req.user);
 
     res.status(201).json({
@@ -188,9 +228,24 @@ exports.updateLead = async (req, res) => {
     }
 
     // Role-based authorization
-    const counsellorId = lead.assignedCounsellor?._id || lead.assignedCounsellor;
-    if (req.user.role === 'Counsellor' && counsellorId?.toString() !== req.user.id) {
+    const counsellorId = lead.assignedCounsellor?._id?.toString() || lead.assignedCounsellor?.toString();
+    const createdById = lead.createdBy?._id?.toString() || lead.createdBy?.toString();
+
+    if (req.user.role === 'Counsellor' && counsellorId !== req.user.id) {
       return res.status(403).json({ success: false, message: 'Not authorized to edit this lead' });
+    }
+
+    if (req.user.role === 'Senior Zonal Manager') {
+      const isAssigned = counsellorId === req.user.id;
+      const isCreator = createdById === req.user.id;
+      if (!isAssigned && !isCreator) {
+        return res.status(403).json({ success: false, message: 'Not authorized to edit this lead' });
+      }
+      // Senior Zonal Manager cannot modify createdBy or assignment fields
+      delete req.body.createdBy;
+      delete req.body.assignedCounsellor;
+      delete req.body.targetStaffId;
+      delete req.body.counsellorId;
     }
 
     // Track status change for timeline
@@ -444,6 +499,17 @@ exports.addNote = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Lead not found' });
     }
 
+    // Role-based authorization for Counsellors and Senior Zonal Managers
+    const counsellorId = lead.assignedCounsellor?._id?.toString() || lead.assignedCounsellor?.toString();
+    const createdById = lead.createdBy?._id?.toString() || lead.createdBy?.toString();
+
+    if (req.user.role === 'Counsellor' && counsellorId !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'Not authorized to add notes to this lead' });
+    }
+    if (req.user.role === 'Senior Zonal Manager' && counsellorId !== req.user.id && createdById !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'Not authorized to add notes to this lead' });
+    }
+
     const { text } = req.body;
     if (!text) {
       return res.status(400).json({ success: false, message: 'Please enter note text' });
@@ -481,6 +547,17 @@ exports.scheduleFollowUp = async (req, res) => {
     const lead = await Lead.findById(req.params.id);
     if (!lead) {
       return res.status(404).json({ success: false, message: 'Lead not found' });
+    }
+
+    // Role-based authorization for Counsellors and Senior Zonal Managers
+    const counsellorId = lead.assignedCounsellor?._id?.toString() || lead.assignedCounsellor?.toString();
+    const createdById = lead.createdBy?._id?.toString() || lead.createdBy?.toString();
+
+    if (req.user.role === 'Counsellor' && counsellorId !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'Not authorized to schedule follow-up for this lead' });
+    }
+    if (req.user.role === 'Senior Zonal Manager' && counsellorId !== req.user.id && createdById !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'Not authorized to schedule follow-up for this lead' });
     }
 
     const { date, time, type, notes } = req.body;
@@ -528,6 +605,17 @@ exports.logCall = async (req, res) => {
     const lead = await Lead.findById(req.params.id);
     if (!lead) {
       return res.status(404).json({ success: false, message: 'Lead not found' });
+    }
+
+    // Role-based authorization for Counsellors and Senior Zonal Managers
+    const counsellorId = lead.assignedCounsellor?._id?.toString() || lead.assignedCounsellor?.toString();
+    const createdById = lead.createdBy?._id?.toString() || lead.createdBy?.toString();
+
+    if (req.user.role === 'Counsellor' && counsellorId !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'Not authorized to log calls for this lead' });
+    }
+    if (req.user.role === 'Senior Zonal Manager' && counsellorId !== req.user.id && createdById !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'Not authorized to log calls for this lead' });
     }
 
     const { outcome, notes, callTime } = req.body;

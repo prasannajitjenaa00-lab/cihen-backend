@@ -145,6 +145,11 @@ const LeadSchema = new mongoose.Schema(
       ref: 'User',
       index: true
     },
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      index: true
+    },
     status: {
       type: String,
       enum: [

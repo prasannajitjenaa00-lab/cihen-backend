@@ -66,9 +66,12 @@ exports.getStats = async (req, res) => {
     let leadsQuery = {};
     let followUpQuery = {};
 
-    // Role guard: Counsellors only see their own stats
+    // Role guard: Counsellors and Senior Zonal Managers
     if (req.user.role === 'Counsellor') {
       leadsQuery.assignedCounsellor = req.user.id;
+      followUpQuery.counsellor = req.user.id;
+    } else if (req.user.role === 'Senior Zonal Manager') {
+      leadsQuery.$or = [{ assignedCounsellor: req.user.id }, { createdBy: req.user.id }];
       followUpQuery.counsellor = req.user.id;
     }
 
@@ -132,6 +135,9 @@ exports.getLeadsCharts = async (req, res) => {
     if (req.user.role === 'Counsellor') {
       baseQuery.assignedCounsellor = req.user.id;
       followUpQuery.counsellor = req.user.id;
+    } else if (req.user.role === 'Senior Zonal Manager') {
+      baseQuery.$or = [{ assignedCounsellor: req.user.id }, { createdBy: req.user.id }];
+      followUpQuery.counsellor = req.user.id;
     }
 
     // 1. Leads by Day (Line/Bar chart)
@@ -190,9 +196,9 @@ exports.getLeadsCharts = async (req, res) => {
       { $project: { name: '$_id', value: '$count', _id: 0 } }
     ]);
 
-    // 4. Counsellor Performance
+    // 4. Counsellor Performance (not exposed to Counsellors or Senior Zonal Managers)
     let counsellorPerformance = [];
-    if (req.user.role !== 'Counsellor') {
+    if (!['Counsellor', 'Senior Zonal Manager'].includes(req.user.role)) {
       const counsellors = await User.find({ role: 'Counsellor' });
 
       for (const c of counsellors) {

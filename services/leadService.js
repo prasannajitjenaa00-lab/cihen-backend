@@ -153,6 +153,11 @@ const createProcessedLead = async (leadData, userTriggered = null) => {
   // Create lead instance (does not save to DB yet)
   const lead = new Lead(leadData);
 
+  // Set creator if user triggered
+  if (userTriggered) {
+    lead.createdBy = userTriggered._id;
+  }
+
   // Set duplicate metadata
   if (dupCheck.duplicate && dupCheck.action === 'flag') {
     lead.duplicateStatus = 'Possible Duplicate';
@@ -160,9 +165,13 @@ const createProcessedLead = async (leadData, userTriggered = null) => {
   }
 
   // Handle assignment
-  const counsellorId = await getAssignedCounsellor(lead, settings);
-  if (counsellorId) {
-    lead.assignedCounsellor = counsellorId;
+  // If creator is a Senior Zonal Manager, do not auto-assign to a counsellor via round-robin; leave unassigned
+  let counsellorId = null;
+  if (userTriggered?.role !== 'Senior Zonal Manager') {
+    counsellorId = await getAssignedCounsellor(lead, settings);
+    if (counsellorId) {
+      lead.assignedCounsellor = counsellorId;
+    }
   }
 
   // Save the lead to trigger pre-save (leadId generation)

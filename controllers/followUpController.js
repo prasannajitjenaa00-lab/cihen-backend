@@ -10,9 +10,18 @@ exports.getFollowUps = async (req, res) => {
     let query = {};
     const { filter, status } = req.query;
 
-    // Role guard: Counsellor restriction
+    // Role guard: Counsellor / Senior Zonal Manager restriction
     if (req.user.role === 'Counsellor') {
       query.counsellor = req.user.id;
+    } else if (req.user.role === 'Senior Zonal Manager') {
+      const permittedLeads = await Lead.find({
+        $or: [{ assignedCounsellor: req.user.id }, { createdBy: req.user.id }]
+      }).select('_id');
+      const permittedLeadIds = permittedLeads.map(l => l._id);
+      query.$or = [
+        { counsellor: req.user.id },
+        { lead: { $in: permittedLeadIds } }
+      ];
     }
 
     if (status) {
@@ -61,6 +70,22 @@ exports.updateFollowUp = async (req, res) => {
     // Role-based auth
     if (req.user.role === 'Counsellor' && followUp.counsellor.toString() !== req.user.id) {
       return res.status(403).json({ success: false, message: 'Not authorized to modify this follow-up' });
+    }
+
+    if (req.user.role === 'Senior Zonal Manager') {
+      const isCounsellor = followUp.counsellor.toString() === req.user.id;
+      let isLeadAuthorized = false;
+      if (!isCounsellor) {
+        const lead = await Lead.findById(followUp.lead);
+        if (lead) {
+          const leadAssigned = lead.assignedCounsellor?.toString();
+          const leadCreator = lead.createdBy?.toString();
+          isLeadAuthorized = (leadAssigned === req.user.id || leadCreator === req.user.id);
+        }
+      }
+      if (!isCounsellor && !isLeadAuthorized) {
+        return res.status(403).json({ success: false, message: 'Not authorized to modify this follow-up' });
+      }
     }
 
     const { status: newStatus, date: newDate, time: newTime, notes: newNotes } = req.body;
