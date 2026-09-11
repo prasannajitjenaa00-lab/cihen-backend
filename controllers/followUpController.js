@@ -10,8 +10,8 @@ exports.getFollowUps = async (req, res) => {
     let query = {};
     const { filter, status } = req.query;
 
-    // Role guard: Counsellor / Senior Zonal Manager restriction
-    if (req.user.role === 'Counsellor') {
+    // Role guard: Counsellor / Admissions Officer / Senior Zonal Manager / Admissions Manager restriction
+    if (req.user.role === 'Counsellor' || req.user.role === 'Admissions Officer') {
       query.counsellor = req.user.id;
     } else if (req.user.role === 'Senior Zonal Manager') {
       const permittedLeads = await Lead.find({
@@ -22,6 +22,25 @@ exports.getFollowUps = async (req, res) => {
         { counsellor: req.user.id },
         { lead: { $in: permittedLeadIds } }
       ];
+    } else if (req.user.role === 'Admissions Manager') {
+      // Admissions Manager: follow-ups for their admissions-scoped leads
+      const admissionsStaffUsers = await require('../models/User').find({
+        role: { $in: ['Counsellor', 'Admissions Officer', 'Admissions Manager'] },
+        isActive: true
+      }).select('_id');
+      const admissionsStaffIds = admissionsStaffUsers.map(u => u._id);
+      const ADMISSIONS_STATUSES = [
+        'Contacted', 'Interested', 'Follow-up', 'Visit Scheduled',
+        'Application Started', 'Application Submitted', 'Admission Confirmed'
+      ];
+      const permittedLeads = await Lead.find({
+        $or: [
+          { assignedCounsellor: { $in: admissionsStaffIds } },
+          { status: { $in: ADMISSIONS_STATUSES } }
+        ]
+      }).select('_id');
+      const permittedLeadIds = permittedLeads.map(l => l._id);
+      query.lead = { $in: permittedLeadIds };
     }
 
     if (status) {
@@ -68,7 +87,7 @@ exports.updateFollowUp = async (req, res) => {
     }
 
     // Role-based auth
-    if (req.user.role === 'Counsellor' && followUp.counsellor.toString() !== req.user.id) {
+    if ((req.user.role === 'Counsellor' || req.user.role === 'Admissions Officer') && followUp.counsellor.toString() !== req.user.id) {
       return res.status(403).json({ success: false, message: 'Not authorized to modify this follow-up' });
     }
 
@@ -84,6 +103,29 @@ exports.updateFollowUp = async (req, res) => {
         }
       }
       if (!isCounsellor && !isLeadAuthorized) {
+        return res.status(403).json({ success: false, message: 'Not authorized to modify this follow-up' });
+      }
+    }
+
+    if (req.user.role === 'Admissions Manager') {
+      const lead = await Lead.findById(followUp.lead);
+      if (lead) {
+        const ADMISSIONS_STATUSES = [
+          'Contacted', 'Interested', 'Follow-up', 'Visit Scheduled',
+          'Application Started', 'Application Submitted', 'Admission Confirmed'
+        ];
+        const admissionsStaffUsers = await require('../models/User').find({
+          role: { $in: ['Counsellor', 'Admissions Officer', 'Admissions Manager'] },
+          isActive: true
+        }).select('_id');
+        const admissionsStaffIds = admissionsStaffUsers.map(u => u._id.toString());
+        const counsellorId = lead.assignedCounsellor?.toString();
+        const isAssignedToAdmissionsStaff = admissionsStaffIds.includes(counsellorId);
+        const isAdmissionsStatus = ADMISSIONS_STATUSES.includes(lead.status);
+        if (!isAssignedToAdmissionsStaff && !isAdmissionsStatus) {
+          return res.status(403).json({ success: false, message: 'Not authorized to modify this follow-up' });
+        }
+      } else {
         return res.status(403).json({ success: false, message: 'Not authorized to modify this follow-up' });
       }
     }

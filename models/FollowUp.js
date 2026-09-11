@@ -37,4 +37,8 @@ const FollowUpSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Indexes for performance optimization
+FollowUpSchema.index({ counsellor: 1, status: 1, date: 1 });
+FollowUpSchema.index({ lead: 1 });
+
 module.exports = mongoose.model('FollowUp', FollowUpSchema);

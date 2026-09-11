@@ -15,6 +15,7 @@ const AuditLog = require('../models/AuditLog');
 const seedSuperUsers = require('./seedSuperUsers');
 const seedCGO = require('./seedCGO');
 const seedSZM = require('./seedSZM');
+const seedPart4 = require('./seedPart4');
 
 const seedData = async () => {
   try {
@@ -23,10 +24,10 @@ const seedData = async () => {
     await mongoose.connect(connString);
     console.log('Connected.');
 
-    // Clear existing data (Preserve SUPER_USER, CGO, and Senior Zonal Manager accounts and their passwords)
-    console.log('Clearing existing database collections (preserving SUPER_USER, CGO, and Senior Zonal Manager accounts)...');
+    // Clear existing data
+    console.log('Clearing existing database collections...');
     await Promise.all([
-      User.deleteMany({ role: { $nin: ['SUPER_USER', 'CGO', 'Senior Zonal Manager'] } }),
+      User.deleteMany({}),
       Lead.deleteMany(),
       FollowUp.deleteMany(),
       Call.deleteMany(),
@@ -41,54 +42,15 @@ const seedData = async () => {
     ]);
     console.log('Collections cleared.');
 
-    // 1. Seed Users
-    console.log('Seeding staff accounts...');
-    const superAdmin = await User.create({
-      name: 'Super Admin User',
-      email: 'superadmin@cohenschool.com',
-      password: 'password123',
-      role: 'Super Admin'
-    });
-
-    const admin = await User.create({
-      name: 'Admin User',
-      email: 'admin@cohenschool.com',
-      password: 'password123',
-      role: 'Admin'
-    });
-
-    const counsellor1 = await User.create({
-      name: 'Rahul Kumar',
-      email: 'rahul@cohenschool.com',
-      password: 'password123',
-      role: 'Counsellor'
-    });
-
-    const counsellor2 = await User.create({
-      name: 'Priya Sharma',
-      email: 'priya@cohenschool.com',
-      password: 'password123',
-      role: 'Counsellor'
-    });
-
-    const counsellor3 = await User.create({
-      name: 'Amit Patel',
-      email: 'amit@cohenschool.com',
-      password: 'password123',
-      role: 'Counsellor'
-    });
-
-    const admissionStaff = await User.create({
-      name: 'Sarah Office',
-      email: 'admissionstaff@cohenschool.com',
-      password: 'password123',
-      role: 'Admission Staff'
-    });
-
-    console.log('Staff accounts created.');
+    // 1. Seed Official Cohen International School Users
+    console.log('Seeding official staff accounts...');
     await seedSuperUsers();
     await seedCGO();
     await seedSZM();
+    await seedPart4();
+
+    // Fetch official employees for mock lead assignments
+    const counsellors = await User.find({ role: { $in: ['Admissions Officer', 'Admissions Manager', 'Senior Zonal Manager'] } });
 
     // Create default CRM Settings
     console.log('Seeding initial configurations...');
@@ -100,7 +62,6 @@ const seedData = async () => {
 
     // 2. Seed Leads (20 leads)
     console.log('Seeding leads...');
-    const counsellors = [counsellor1, counsellor2, counsellor3];
     const classes = ['Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10'];
     const sources = ['Facebook', 'Instagram', 'Website', 'Google', 'WhatsApp', 'Manual', 'Referral'];
     const campaigns = ['School Admission 2026', 'Secondary School Campaign', 'Digital Prospectus Promo', 'Organic Search'];
@@ -303,12 +264,13 @@ const seedData = async () => {
     console.log(`${students.length} student records created.`);
 
     // Log seed completion
+    const mainSuperUser = await User.findOne({ role: 'SUPER_USER' });
     await AuditLog.create({
-      user: superAdmin._id,
+      user: mainSuperUser?._id,
       action: 'Seeding',
       entity: 'System',
       entityId: 'SeedingScript',
-      details: 'Database seeded with demo dataset.'
+      details: 'Database seeded with official Cohen International School dataset.'
     });
 
     console.log('Database seeding completed successfully!');

@@ -69,9 +69,9 @@ async function runTests() {
   console.log('CGO and Super Users reset to initial mobile password. Running test suite...\n');
 
   // Fetch counsellors / staff for testing assignments
-  const counsellor1 = await User.findOne({ role: 'Counsellor', status: 'Active' });
-  const counsellor2 = await User.findOne({ role: 'Counsellor', status: 'Active', _id: { $ne: counsellor1?._id } });
-  const admissionStaff = await User.findOne({ role: 'Admission Staff' });
+  const counsellor1 = await User.findOne({ role: { $in: ['Admissions Officer', 'Admissions Manager', 'Senior Zonal Manager', 'Counsellor'] }, status: 'Active' });
+  const counsellor2 = await User.findOne({ role: { $in: ['Admissions Officer', 'Admissions Manager', 'Senior Zonal Manager', 'Counsellor'] }, status: 'Active', _id: { $ne: counsellor1?._id } });
+  const admissionStaff = await User.findOne({ role: { $in: ['Admissions Officer', 'Admissions Manager'] } });
   const superUser = await User.findOne({ role: 'SUPER_USER' });
 
   // Get test leads
@@ -344,23 +344,28 @@ async function runTests() {
   });
   assert(superBulkRes.status === 200, 'TEST 8d - SUPER_USER can use bulk lead allocation (HTTP 200)');
 
-  // --- TEST 9: Counsellor Role Restriction Preserved ---
-  console.log('\n--- RUNNING TEST 9: Counsellor Restriction Preservation ---');
-  // Login as Counsellor (Rahul)
+  // --- TEST 9: Operational Staff Restriction Preserved ---
+  console.log('\n--- RUNNING TEST 9: Operational Staff Restriction Preservation ---');
+  // Login as Admissions Officer (Dr. Monika Sarkar)
+  const aoUser = await User.findOne({ email: 'monika.sarkar@coheninternationalschool.com' });
+  if (aoUser) {
+    aoUser.password = 'TestPass@2026AO';
+    await aoUser.save();
+  }
   const counsellorRes = await fetch(`${BASE_URL}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: 'rahul@cohenschool.com', password: 'password123' })
+    body: JSON.stringify({ email: 'monika.sarkar@coheninternationalschool.com', password: 'TestPass@2026AO' })
   });
   const counsellorData = await counsellorRes.json();
   if (counsellorData.token) {
-    // Counsellor should NOT be able to allocate leads
+    // Operational staff should NOT be able to allocate leads
     const cAssignRes = await fetch(`${BASE_URL}/leads/${singleLeadId}/assign`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${counsellorData.token}` },
       body: JSON.stringify({ targetStaffId: counsellor2?._id?.toString() || counsellor1._id.toString() })
     });
-    assert(cAssignRes.status === 403, 'TEST 9a - Counsellor blocked from allocating leads (HTTP 403)');
+    assert(cAssignRes.status === 403, 'TEST 9a - Operational staff blocked from allocating leads (HTTP 403)');
 
     // Counsellor blocked from bulk allocation
     const cBulkRes = await fetch(`${BASE_URL}/leads/bulk-assign`, {

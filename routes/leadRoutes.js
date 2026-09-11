@@ -19,7 +19,7 @@ router.use(protect); // Protect all lead routes
 
 router.route('/')
   .get(getLeads)
-  .post(authorizeRoles('Super Admin', 'Admin', 'Counsellor', 'CGO', 'Senior Zonal Manager'), createLead);
+  .post(authorizeRoles('Super Admin', 'Admin', 'Counsellor', 'CGO', 'Senior Zonal Manager', 'Admissions Officer', 'Admissions Manager'), createLead);
 
 // Bulk lead allocation route (must be defined before /:id)
 router.post('/bulk-assign', authorizeRoles('Super Admin', 'Admin', 'CGO'), bulkAssignLeads);
@@ -30,9 +30,9 @@ router.route('/:id')
   .delete(authorizeRoles('Super Admin'), deleteLead);
 
 router.post('/:id/assign', authorizeRoles('Super Admin', 'Admin', 'CGO'), assignLead);
-router.post('/:id/notes', authorizeRoles('Counsellor', 'Super Admin', 'Admin', 'CGO', 'Senior Zonal Manager'), addNote);
-router.post('/:id/followups', authorizeRoles('Counsellor', 'Super Admin', 'Admin', 'CGO', 'Senior Zonal Manager'), scheduleFollowUp);
-router.post('/:id/calls', authorizeRoles('Counsellor', 'Super Admin', 'Admin', 'CGO', 'Senior Zonal Manager'), logCall);
+router.post('/:id/notes', authorizeRoles('Counsellor', 'Super Admin', 'Admin', 'CGO', 'Senior Zonal Manager', 'Admissions Officer', 'Admissions Manager'), addNote);
+router.post('/:id/followups', authorizeRoles('Counsellor', 'Super Admin', 'Admin', 'CGO', 'Senior Zonal Manager', 'Admissions Officer', 'Admissions Manager'), scheduleFollowUp);
+router.post('/:id/calls', authorizeRoles('Counsellor', 'Super Admin', 'Admin', 'CGO', 'Senior Zonal Manager', 'Admissions Officer', 'Admissions Manager'), logCall);
 router.post('/:id/resolve-duplicate', authorizeRoles('Super Admin', 'Admin', 'CGO'), resolveDuplicate);
 
 module.exports = router;

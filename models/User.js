@@ -27,7 +27,7 @@ const UserSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ['SUPER_USER', 'Super Admin', 'Admin', 'CGO', 'Senior Zonal Manager', 'Admissions Officer', 'Counsellor', 'Admission Staff'],
+      enum: ['SUPER_USER', 'Super Admin', 'Admin', 'CGO', 'Senior Zonal Manager', 'Admissions Manager', 'Admissions Officer', 'Counsellor', 'Admission Staff'],
       required: [true, 'Please specify user role']
     },
     designation: {

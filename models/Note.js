@@ -20,4 +20,8 @@ const NoteSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Indexes for performance optimization
+NoteSchema.index({ createdBy: 1, createdAt: -1 });
+NoteSchema.index({ lead: 1 });
+
 module.exports = mongoose.model('Note', NoteSchema);

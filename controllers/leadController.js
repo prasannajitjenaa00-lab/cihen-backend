@@ -17,8 +17,8 @@ exports.getLeads = async (req, res) => {
     const andConditions = [];
 
     // 1. Role-based restrictions:
-    // Counsellors can only see assigned leads
-    if (req.user.role === 'Counsellor') {
+    // Counsellors and Admissions Officers can only see assigned leads
+    if (req.user.role === 'Counsellor' || req.user.role === 'Admissions Officer') {
       andConditions.push({ assignedCounsellor: req.user.id });
     } else if (req.user.role === 'Senior Zonal Manager') {
       // Senior Zonal Managers strictly see only leads assigned to them OR created by them
@@ -26,6 +26,24 @@ exports.getLeads = async (req, res) => {
         $or: [
           { assignedCounsellor: req.user.id },
           { createdBy: req.user.id }
+        ]
+      });
+    } else if (req.user.role === 'Admissions Manager') {
+      // Admissions Manager has supervisory admissions visibility:
+      // Leads assigned to admissions/counselling staff OR leads in admissions pipeline stages
+      const admissionsStaffUsers = await User.find({
+        role: { $in: ['Counsellor', 'Admissions Officer', 'Admissions Manager'] },
+        isActive: true
+      }).select('_id');
+      const admissionsStaffIds = admissionsStaffUsers.map(u => u._id);
+      const ADMISSIONS_STATUSES = [
+        'Contacted', 'Interested', 'Follow-up', 'Visit Scheduled',
+        'Application Started', 'Application Submitted', 'Admission Confirmed'
+      ];
+      andConditions.push({
+        $or: [
+          { assignedCounsellor: { $in: admissionsStaffIds } },
+          { status: { $in: ADMISSIONS_STATUSES } }
         ]
       });
     }
@@ -58,8 +76,9 @@ exports.getLeads = async (req, res) => {
     if (req.query.priority) {
       query.priority = req.query.priority;
     }
-    // Only apply assignedCounsellor query filter if user is not Senior Zonal Manager or Counsellor
-    if (req.query.assignedCounsellor && req.user.role !== 'Counsellor' && req.user.role !== 'Senior Zonal Manager') {
+    // Only apply assignedCounsellor query filter for admin-level roles
+    const restrictedRoles = ['Counsellor', 'Admissions Officer', 'Senior Zonal Manager', 'Admissions Manager'];
+    if (req.query.assignedCounsellor && !restrictedRoles.includes(req.user.role)) {
       query.assignedCounsellor = req.query.assignedCounsellor;
     }
     if (req.query.campaign) {
@@ -145,7 +164,8 @@ exports.getLead = async (req, res) => {
     const counsellorId = lead.assignedCounsellor?._id?.toString() || lead.assignedCounsellor?.toString();
     const createdById = lead.createdBy?._id?.toString() || lead.createdBy?.toString();
 
-    if (req.user.role === 'Counsellor' && counsellorId !== req.user.id) {
+    // Counsellors and Admissions Officers: only their assigned leads
+    if ((req.user.role === 'Counsellor' || req.user.role === 'Admissions Officer') && counsellorId !== req.user.id) {
       return res.status(403).json({ success: false, message: 'Not authorized to view this lead' });
     }
 
@@ -153,6 +173,24 @@ exports.getLead = async (req, res) => {
       const isAssigned = counsellorId === req.user.id;
       const isCreator = createdById === req.user.id;
       if (!isAssigned && !isCreator) {
+        return res.status(403).json({ success: false, message: 'Not authorized to view this lead' });
+      }
+    }
+
+    // Admissions Manager: supervisory admissions scope
+    if (req.user.role === 'Admissions Manager') {
+      const ADMISSIONS_STATUSES = [
+        'Contacted', 'Interested', 'Follow-up', 'Visit Scheduled',
+        'Application Started', 'Application Submitted', 'Admission Confirmed'
+      ];
+      const admissionsStaffUsers = await User.find({
+        role: { $in: ['Counsellor', 'Admissions Officer', 'Admissions Manager'] },
+        isActive: true
+      }).select('_id');
+      const admissionsStaffIds = admissionsStaffUsers.map(u => u._id.toString());
+      const isAssignedToAdmissionsStaff = admissionsStaffIds.includes(counsellorId);
+      const isAdmissionsStatus = ADMISSIONS_STATUSES.includes(lead.status);
+      if (!isAssignedToAdmissionsStaff && !isAdmissionsStatus) {
         return res.status(403).json({ success: false, message: 'Not authorized to view this lead' });
       }
     }
@@ -196,8 +234,9 @@ exports.createLead = async (req, res) => {
     // Automatically set createdBy on server; strip client-provided createdBy
     delete leadData.createdBy;
 
-    // Senior Zonal Manager cannot assign leads during creation
-    if (req.user.role === 'Senior Zonal Manager') {
+    // Field staff cannot assign leads during creation
+    const noAssignRoles = ['Senior Zonal Manager', 'Counsellor', 'Admissions Officer', 'Admissions Manager'];
+    if (noAssignRoles.includes(req.user.role)) {
       delete leadData.assignedCounsellor;
       delete leadData.targetStaffId;
       delete leadData.counsellorId;
@@ -231,7 +270,8 @@ exports.updateLead = async (req, res) => {
     const counsellorId = lead.assignedCounsellor?._id?.toString() || lead.assignedCounsellor?.toString();
     const createdById = lead.createdBy?._id?.toString() || lead.createdBy?.toString();
 
-    if (req.user.role === 'Counsellor' && counsellorId !== req.user.id) {
+    // Counsellors and Admissions Officers: only their assigned leads
+    if ((req.user.role === 'Counsellor' || req.user.role === 'Admissions Officer') && counsellorId !== req.user.id) {
       return res.status(403).json({ success: false, message: 'Not authorized to edit this lead' });
     }
 
@@ -241,11 +281,33 @@ exports.updateLead = async (req, res) => {
       if (!isAssigned && !isCreator) {
         return res.status(403).json({ success: false, message: 'Not authorized to edit this lead' });
       }
-      // Senior Zonal Manager cannot modify createdBy or assignment fields
+    }
+
+    // Strip assignment/ownership fields for all field-staff roles
+    const fieldStaffRoles = ['Counsellor', 'Admissions Officer', 'Senior Zonal Manager', 'Admissions Manager'];
+    if (fieldStaffRoles.includes(req.user.role)) {
       delete req.body.createdBy;
       delete req.body.assignedCounsellor;
       delete req.body.targetStaffId;
       delete req.body.counsellorId;
+    }
+
+    // Admissions Manager: supervisory admissions scope guard
+    if (req.user.role === 'Admissions Manager') {
+      const ADMISSIONS_STATUSES = [
+        'Contacted', 'Interested', 'Follow-up', 'Visit Scheduled',
+        'Application Started', 'Application Submitted', 'Admission Confirmed'
+      ];
+      const admissionsStaffUsers = await User.find({
+        role: { $in: ['Counsellor', 'Admissions Officer', 'Admissions Manager'] },
+        isActive: true
+      }).select('_id');
+      const admissionsStaffIds = admissionsStaffUsers.map(u => u._id.toString());
+      const isAssignedToAdmissionsStaff = admissionsStaffIds.includes(counsellorId);
+      const isAdmissionsStatus = ADMISSIONS_STATUSES.includes(lead.status);
+      if (!isAssignedToAdmissionsStaff && !isAdmissionsStatus) {
+        return res.status(403).json({ success: false, message: 'Not authorized to edit this lead' });
+      }
     }
 
     // Track status change for timeline
@@ -499,15 +561,29 @@ exports.addNote = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Lead not found' });
     }
 
-    // Role-based authorization for Counsellors and Senior Zonal Managers
+    // Role-based authorization
     const counsellorId = lead.assignedCounsellor?._id?.toString() || lead.assignedCounsellor?.toString();
     const createdById = lead.createdBy?._id?.toString() || lead.createdBy?.toString();
 
-    if (req.user.role === 'Counsellor' && counsellorId !== req.user.id) {
+    if ((req.user.role === 'Counsellor' || req.user.role === 'Admissions Officer') && counsellorId !== req.user.id) {
       return res.status(403).json({ success: false, message: 'Not authorized to add notes to this lead' });
     }
     if (req.user.role === 'Senior Zonal Manager' && counsellorId !== req.user.id && createdById !== req.user.id) {
       return res.status(403).json({ success: false, message: 'Not authorized to add notes to this lead' });
+    }
+    if (req.user.role === 'Admissions Manager') {
+      const ADMISSIONS_STATUSES = [
+        'Contacted', 'Interested', 'Follow-up', 'Visit Scheduled',
+        'Application Started', 'Application Submitted', 'Admission Confirmed'
+      ];
+      const admissionsStaffUsers = await User.find({
+        role: { $in: ['Counsellor', 'Admissions Officer', 'Admissions Manager'] },
+        isActive: true
+      }).select('_id');
+      const admissionsStaffIds = admissionsStaffUsers.map(u => u._id.toString());
+      if (!admissionsStaffIds.includes(counsellorId) && !ADMISSIONS_STATUSES.includes(lead.status)) {
+        return res.status(403).json({ success: false, message: 'Not authorized to add notes to this lead' });
+      }
     }
 
     const { text } = req.body;
@@ -549,15 +625,29 @@ exports.scheduleFollowUp = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Lead not found' });
     }
 
-    // Role-based authorization for Counsellors and Senior Zonal Managers
+    // Role-based authorization
     const counsellorId = lead.assignedCounsellor?._id?.toString() || lead.assignedCounsellor?.toString();
     const createdById = lead.createdBy?._id?.toString() || lead.createdBy?.toString();
 
-    if (req.user.role === 'Counsellor' && counsellorId !== req.user.id) {
+    if ((req.user.role === 'Counsellor' || req.user.role === 'Admissions Officer') && counsellorId !== req.user.id) {
       return res.status(403).json({ success: false, message: 'Not authorized to schedule follow-up for this lead' });
     }
     if (req.user.role === 'Senior Zonal Manager' && counsellorId !== req.user.id && createdById !== req.user.id) {
       return res.status(403).json({ success: false, message: 'Not authorized to schedule follow-up for this lead' });
+    }
+    if (req.user.role === 'Admissions Manager') {
+      const ADMISSIONS_STATUSES = [
+        'Contacted', 'Interested', 'Follow-up', 'Visit Scheduled',
+        'Application Started', 'Application Submitted', 'Admission Confirmed'
+      ];
+      const admissionsStaffUsers = await User.find({
+        role: { $in: ['Counsellor', 'Admissions Officer', 'Admissions Manager'] },
+        isActive: true
+      }).select('_id');
+      const admissionsStaffIds = admissionsStaffUsers.map(u => u._id.toString());
+      if (!admissionsStaffIds.includes(counsellorId) && !ADMISSIONS_STATUSES.includes(lead.status)) {
+        return res.status(403).json({ success: false, message: 'Not authorized to schedule follow-up for this lead' });
+      }
     }
 
     const { date, time, type, notes } = req.body;
@@ -607,15 +697,29 @@ exports.logCall = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Lead not found' });
     }
 
-    // Role-based authorization for Counsellors and Senior Zonal Managers
+    // Role-based authorization
     const counsellorId = lead.assignedCounsellor?._id?.toString() || lead.assignedCounsellor?.toString();
     const createdById = lead.createdBy?._id?.toString() || lead.createdBy?.toString();
 
-    if (req.user.role === 'Counsellor' && counsellorId !== req.user.id) {
+    if ((req.user.role === 'Counsellor' || req.user.role === 'Admissions Officer') && counsellorId !== req.user.id) {
       return res.status(403).json({ success: false, message: 'Not authorized to log calls for this lead' });
     }
     if (req.user.role === 'Senior Zonal Manager' && counsellorId !== req.user.id && createdById !== req.user.id) {
       return res.status(403).json({ success: false, message: 'Not authorized to log calls for this lead' });
+    }
+    if (req.user.role === 'Admissions Manager') {
+      const ADMISSIONS_STATUSES = [
+        'Contacted', 'Interested', 'Follow-up', 'Visit Scheduled',
+        'Application Started', 'Application Submitted', 'Admission Confirmed'
+      ];
+      const admissionsStaffUsers = await User.find({
+        role: { $in: ['Counsellor', 'Admissions Officer', 'Admissions Manager'] },
+        isActive: true
+      }).select('_id');
+      const admissionsStaffIds = admissionsStaffUsers.map(u => u._id.toString());
+      if (!admissionsStaffIds.includes(counsellorId) && !ADMISSIONS_STATUSES.includes(lead.status)) {
+        return res.status(403).json({ success: false, message: 'Not authorized to log calls for this lead' });
+      }
     }
 
     const { outcome, notes, callTime } = req.body;

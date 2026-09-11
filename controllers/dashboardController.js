@@ -2,6 +2,10 @@ const Lead = require('../models/Lead');
 const FollowUp = require('../models/FollowUp');
 const Admission = require('../models/Admission');
 const User = require('../models/User');
+const Note = require('../models/Note');
+const Call = require('../models/Call');
+const Timeline = require('../models/Timeline');
+const mongoose = require('mongoose');
 
 // Helper to get date boundaries based on range query
 const getDateRangeQuery = (range, startStr, endStr) => {
@@ -66,13 +70,29 @@ exports.getStats = async (req, res) => {
     let leadsQuery = {};
     let followUpQuery = {};
 
-    // Role guard: Counsellors and Senior Zonal Managers
-    if (req.user.role === 'Counsellor') {
+    // Role guard: scoped dashboard metrics
+    if (req.user.role === 'Counsellor' || req.user.role === 'Admissions Officer') {
       leadsQuery.assignedCounsellor = req.user.id;
       followUpQuery.counsellor = req.user.id;
     } else if (req.user.role === 'Senior Zonal Manager') {
       leadsQuery.$or = [{ assignedCounsellor: req.user.id }, { createdBy: req.user.id }];
       followUpQuery.counsellor = req.user.id;
+    } else if (req.user.role === 'Admissions Manager') {
+      const admissionsStaffUsers = await User.find({
+        role: { $in: ['Counsellor', 'Admissions Officer', 'Admissions Manager'] },
+        isActive: true
+      }).select('_id');
+      const admissionsStaffIds = admissionsStaffUsers.map(u => u._id);
+      const ADMISSIONS_STATUSES = [
+        'Contacted', 'Interested', 'Follow-up', 'Visit Scheduled',
+        'Application Started', 'Application Submitted', 'Admission Confirmed'
+      ];
+      leadsQuery.$or = [
+        { assignedCounsellor: { $in: admissionsStaffIds } },
+        { status: { $in: ADMISSIONS_STATUSES } }
+      ];
+      // Show all followups for the admissions team
+      followUpQuery.counsellor = { $in: admissionsStaffIds };
     }
 
     const [
@@ -132,12 +152,27 @@ exports.getLeadsCharts = async (req, res) => {
     let baseQuery = { createdAt: dateRange };
     let followUpQuery = { date: dateRange };
 
-    if (req.user.role === 'Counsellor') {
+    if (req.user.role === 'Counsellor' || req.user.role === 'Admissions Officer') {
       baseQuery.assignedCounsellor = req.user.id;
       followUpQuery.counsellor = req.user.id;
     } else if (req.user.role === 'Senior Zonal Manager') {
       baseQuery.$or = [{ assignedCounsellor: req.user.id }, { createdBy: req.user.id }];
       followUpQuery.counsellor = req.user.id;
+    } else if (req.user.role === 'Admissions Manager') {
+      const admissionsStaffUsers = await User.find({
+        role: { $in: ['Counsellor', 'Admissions Officer', 'Admissions Manager'] },
+        isActive: true
+      }).select('_id');
+      const admissionsStaffIds = admissionsStaffUsers.map(u => u._id);
+      const ADMISSIONS_STATUSES = [
+        'Contacted', 'Interested', 'Follow-up', 'Visit Scheduled',
+        'Application Started', 'Application Submitted', 'Admission Confirmed'
+      ];
+      baseQuery.$or = [
+        { assignedCounsellor: { $in: admissionsStaffIds } },
+        { status: { $in: ADMISSIONS_STATUSES } }
+      ];
+      followUpQuery.counsellor = { $in: admissionsStaffIds };
     }
 
     // 1. Leads by Day (Line/Bar chart)
@@ -196,10 +231,16 @@ exports.getLeadsCharts = async (req, res) => {
       { $project: { name: '$_id', value: '$count', _id: 0 } }
     ]);
 
-    // 4. Counsellor Performance (not exposed to Counsellors or Senior Zonal Managers)
+    // 4. Counsellor Performance (visible to supervisory/admin roles)
     let counsellorPerformance = [];
-    if (!['Counsellor', 'Senior Zonal Manager'].includes(req.user.role)) {
-      const counsellors = await User.find({ role: 'Counsellor' });
+    const noPerformanceRoles = ['Counsellor', 'Admissions Officer', 'Senior Zonal Manager'];
+    if (!noPerformanceRoles.includes(req.user.role)) {
+      // Admissions Manager sees their admissions team; admin/CGO/SUPER_USER see all counsellors
+      const isAdmissionsManager = req.user.role === 'Admissions Manager';
+      const counsellorRoles = isAdmissionsManager
+        ? ['Counsellor', 'Admissions Officer', 'Admissions Manager']
+        : ['Counsellor'];
+      const counsellors = await User.find({ role: { $in: counsellorRoles } });
 
       for (const c of counsellors) {
         const [assigned, contacted, interested, admissions] = await Promise.all([
@@ -263,6 +304,205 @@ exports.getLeadsCharts = async (req, res) => {
     });
   } catch (error) {
     console.error(error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// @desc    Get monitorable staff list for Staff Work Monitor
+// @route   GET /api/dashboard/staff-work/staff
+// @access  Private/Supervision
+exports.getMonitorableStaff = async (req, res) => {
+  try {
+    let roleQuery = {
+      role: { $in: ['Admissions Officer', 'Admissions Manager', 'Senior Zonal Manager', 'CGO', 'Counsellor', 'Admission Staff'] },
+      isActive: true
+    };
+
+    if (req.user.role === 'Admissions Manager') {
+      roleQuery.role = { $in: ['Counsellor', 'Admissions Officer', 'Admissions Manager'] };
+    }
+
+    const staffList = await User.find(roleQuery)
+      .select('_id name email role designation status mobile')
+      .sort({ name: 1 });
+
+    res.status(200).json({
+      success: true,
+      data: staffList
+    });
+  } catch (error) {
+    console.error('getMonitorableStaff error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// @desc    Get staff work overview payload for selected staff member
+// @route   GET /api/dashboard/staff-work/:staffId
+// @access  Private/Supervision
+exports.getStaffWorkOverview = async (req, res) => {
+  try {
+    const { staffId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(staffId)) {
+      return res.status(400).json({ success: false, message: 'Invalid staff ID format.' });
+    }
+
+    const targetStaff = await User.findById(staffId).select('_id name email role designation status mobile');
+    if (!targetStaff) {
+      return res.status(404).json({ success: false, message: 'Staff member not found.' });
+    }
+
+    const [
+      assignedLeads,
+      createdLeads,
+      calls,
+      notes,
+      timelineEvents,
+      followUps
+    ] = await Promise.all([
+      Lead.find({ assignedCounsellor: staffId })
+        .sort({ updatedAt: -1 })
+        .limit(100)
+        .lean(),
+      Lead.find({ createdBy: staffId })
+        .sort({ createdAt: -1 })
+        .limit(50)
+        .lean(),
+      Call.find({ counsellor: staffId })
+        .populate('lead', 'studentName phone classInterested status')
+        .sort({ createdAt: -1 })
+        .limit(100)
+        .lean(),
+      Note.find({ createdBy: staffId })
+        .populate('lead', 'studentName phone classInterested status')
+        .sort({ createdAt: -1 })
+        .limit(100)
+        .lean(),
+      Timeline.find({ user: staffId })
+        .populate('lead', 'studentName phone classInterested status')
+        .sort({ createdAt: -1 })
+        .limit(100)
+        .lean(),
+      FollowUp.find({ counsellor: staffId })
+        .populate('lead', 'studentName phone classInterested status priority')
+        .sort({ date: 1, time: 1 })
+        .limit(150)
+        .lean()
+    ]);
+
+    // Statistics calculations
+    const totalAssigned = assignedLeads.length;
+    const totalCreated = createdLeads.length;
+    const confirmedAdmissions = assignedLeads.filter(l => l.status === 'Admission Confirmed').length;
+    const inProgress = assignedLeads.filter(l => !['New', 'Admission Confirmed', 'Lost', 'Not Interested'].includes(l.status)).length;
+    const conversionRate = totalAssigned > 0 ? parseFloat(((confirmedAdmissions / totalAssigned) * 100).toFixed(1)) : 0;
+
+    const pendingFollowups = followUps.filter(f => f.status === 'Pending').length;
+    const completedFollowups = followUps.filter(f => f.status === 'Completed').length;
+
+    // Status breakdown
+    const statusBreakdown = {
+      New: 0, Contacted: 0, Interested: 0, 'Follow-up': 0, 'Visit Scheduled': 0,
+      'Application Started': 0, 'Application Submitted': 0, 'Admission Confirmed': 0,
+      'Not Interested': 0, Lost: 0
+    };
+    assignedLeads.forEach(l => {
+      if (statusBreakdown[l.status] !== undefined) {
+        statusBreakdown[l.status]++;
+      }
+    });
+
+    // Categorize Follow-ups into Today, Upcoming, Pending/Overdue, Completed
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+    const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+
+    const followUpCategorized = {
+      today: [],
+      upcoming: [],
+      pending: [],
+      completed: []
+    };
+
+    followUps.forEach(f => {
+      const fDate = new Date(f.date);
+      if (f.status === 'Completed') {
+        followUpCategorized.completed.push(f);
+      } else if (f.status === 'Pending') {
+        if (fDate < todayStart) {
+          followUpCategorized.pending.push(f); // Overdue
+        } else if (fDate >= todayStart && fDate <= todayEnd) {
+          followUpCategorized.today.push(f);
+        } else {
+          followUpCategorized.upcoming.push(f);
+        }
+      } else {
+        followUpCategorized.upcoming.push(f);
+      }
+    });
+
+    // Combine call, note, and timeline activities into a unified chronological feed
+    const combinedActivities = [];
+
+    calls.forEach(c => {
+      combinedActivities.push({
+        _id: c._id,
+        type: 'Call',
+        lead: c.lead,
+        summary: `Call Outcome: ${c.outcome}`,
+        details: c.notes || '',
+        timestamp: c.createdAt || c.callDate || new Date()
+      });
+    });
+
+    notes.forEach(n => {
+      combinedActivities.push({
+        _id: n._id,
+        type: 'Note',
+        lead: n.lead,
+        summary: 'Added Note',
+        details: n.text || '',
+        timestamp: n.createdAt || new Date()
+      });
+    });
+
+    timelineEvents.forEach(t => {
+      combinedActivities.push({
+        _id: t._id,
+        type: t.eventType || 'Timeline',
+        lead: t.lead,
+        summary: t.eventType || 'Activity',
+        details: t.message || '',
+        timestamp: t.createdAt || new Date()
+      });
+    });
+
+    combinedActivities.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+    res.status(200).json({
+      success: true,
+      data: {
+        staff: targetStaff,
+        statistics: {
+          totalAssigned,
+          totalCreated,
+          inProgress,
+          confirmedAdmissions,
+          conversionRate,
+          pendingFollowups,
+          completedFollowups,
+          callsLogged: calls.length,
+          notesAdded: notes.length,
+          statusBreakdown
+        },
+        assignedLeads,
+        createdLeads,
+        activities: combinedActivities.slice(0, 100),
+        followUps: followUpCategorized
+      }
+    });
+  } catch (error) {
+    console.error('getStaffWorkOverview error:', error);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 };

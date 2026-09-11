@@ -25,4 +25,7 @@ const TimelineSchema = new mongoose.Schema({
   }
 });
 
+// Index for user activity performance optimization
+TimelineSchema.index({ user: 1, createdAt: -1 });
+
 module.exports = mongoose.model('Timeline', TimelineSchema);

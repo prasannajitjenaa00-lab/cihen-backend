@@ -31,4 +31,8 @@ const CallSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Indexes for performance optimization
+CallSchema.index({ counsellor: 1, createdAt: -1 });
+CallSchema.index({ lead: 1 });
+
 module.exports = mongoose.model('Call', CallSchema);

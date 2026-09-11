@@ -9,7 +9,8 @@
     "seed": "node utils/seed.js",
     "seed:superusers": "node utils/seedSuperUsers.js",
     "seed:cgo": "node utils/seedCGO.js",
-    "seed:szm": "node utils/seedSZM.js"
+    "seed:szm": "node utils/seedSZM.js",
+    "seed:part4": "node utils/seedPart4.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -20,5 +21,8 @@
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.3.1"
+  },
+  "devDependencies": {
+    "axios": "^1.20.0"
   }
 }
