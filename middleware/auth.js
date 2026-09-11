@@ -23,26 +23,26 @@ const protect = async (req, res, next) => {
         return res.status(401).json({ success: false, message: 'Not authorized, user not found' });
       }
 
-      if (req.user.status === 'Inactive') {
-        return res.status(401).json({ success: false, message: 'User account is deactivated' });
+      if (req.user.status === 'Inactive' || req.user.isActive === false) {
+        return res.status(401).json({ success: false, message: 'Your account is inactive. Please contact the administrator.' });
       }
 
       next();
     } catch (error) {
       console.error(error);
-      res.status(401).json({ success: false, message: 'Not authorized, token failed' });
+      return res.status(401).json({ success: false, message: 'Not authorized, token failed' });
     }
   }
 
   if (!token) {
-    res.status(401).json({ success: false, message: 'Not authorized, no token' });
+    return res.status(401).json({ success: false, message: 'Not authorized, no token' });
   }
 };
 
-// Grant access to specific roles
+// Grant access to specific roles (SUPER_USER has complete CRM access)
 const authorizeRoles = (...roles) => {
   return (req, res, next) => {
-    if (!req.user || !roles.includes(req.user.role)) {
+    if (!req.user || (!roles.includes(req.user.role) && req.user.role !== 'SUPER_USER')) {
       return res.status(403).json({
         success: false,
         message: `User role ${req.user ? req.user.role : 'Guest'} is not authorized to access this route`

@@ -27,8 +27,26 @@ const UserSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ['Super Admin', 'Admin', 'Counsellor', 'Admission Staff'],
+      enum: ['SUPER_USER', 'Super Admin', 'Admin', 'Counsellor', 'Admission Staff'],
       required: [true, 'Please specify user role']
+    },
+    designation: {
+      type: String,
+      trim: true,
+      default: ''
+    },
+    mobile: {
+      type: String,
+      trim: true,
+      default: ''
+    },
+    isActive: {
+      type: Boolean,
+      default: true
+    },
+    mustChangePassword: {
+      type: Boolean,
+      default: false
     },
     status: {
       type: String,
@@ -39,10 +57,17 @@ const UserSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Hash password before saving
+// Hash password before saving & keep status and isActive in sync
 UserSchema.pre('save', async function (next) {
+  // Sync status and isActive
+  if (this.isModified('status') && !this.isModified('isActive')) {
+    this.isActive = this.status === 'Active';
+  } else if (this.isModified('isActive') && !this.isModified('status')) {
+    this.status = this.isActive ? 'Active' : 'Inactive';
+  }
+
   if (!this.isModified('password')) {
-    next();
+    return next();
   }
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);

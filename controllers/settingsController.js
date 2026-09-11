@@ -181,18 +181,27 @@ exports.getUsers = async (req, res) => {
 // @access  Private/Super Admin
 exports.createUser = async (req, res) => {
   try {
-    const { name, email, password, role } = req.body;
+    const { name, email, password, role, designation, mobile, isActive } = req.body;
 
     if (!name || !email || !password || !role) {
       return res.status(400).json({ success: false, message: 'All fields are required' });
     }
 
-    const userExists = await User.findOne({ email });
+    const userExists = await User.findOne({ email: email.toLowerCase().trim() });
     if (userExists) {
       return res.status(400).json({ success: false, message: 'User already exists' });
     }
 
-    const user = await User.create({ name, email, password, role });
+    const user = await User.create({
+      name,
+      email: email.toLowerCase().trim(),
+      password,
+      role,
+      designation: designation || '',
+      mobile: mobile || '',
+      isActive: isActive !== undefined ? isActive : true,
+      status: isActive === false ? 'Inactive' : 'Active'
+    });
 
     await AuditLog.create({
       user: req.user.id,
@@ -219,11 +228,20 @@ exports.updateUser = async (req, res) => {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    const { status, role, name } = req.body;
+    const { status, role, name, designation, mobile, isActive } = req.body;
 
-    if (status) user.status = status;
+    if (status !== undefined) {
+      user.status = status;
+      user.isActive = status === 'Active';
+    }
+    if (isActive !== undefined) {
+      user.isActive = isActive;
+      user.status = isActive ? 'Active' : 'Inactive';
+    }
     if (role) user.role = role;
     if (name) user.name = name;
+    if (designation !== undefined) user.designation = designation;
+    if (mobile !== undefined) user.mobile = mobile;
 
     await user.save();
 

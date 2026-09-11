@@ -23,21 +23,21 @@ exports.login = async (req, res) => {
     }
 
     // Check for user
-    const user = await User.findOne({ email }).select('+password');
+    const user = await User.findOne({ email: email.toLowerCase().trim() }).select('+password');
 
     if (!user) {
-      return res.status(401).json({ success: false, message: 'Invalid credentials' });
+      return res.status(401).json({ success: false, message: 'Invalid email or password.' });
     }
 
     // Check if password matches
     const isMatch = await user.matchPassword(password);
 
     if (!isMatch) {
-      return res.status(401).json({ success: false, message: 'Invalid credentials' });
+      return res.status(401).json({ success: false, message: 'Invalid email or password.' });
     }
 
-    if (user.status === 'Inactive') {
-      return res.status(401).json({ success: false, message: 'User account is deactivated' });
+    if (user.status === 'Inactive' || user.isActive === false) {
+      return res.status(401).json({ success: false, message: 'Your account is inactive. Please contact the administrator.' });
     }
 
     // Create token
@@ -50,7 +50,17 @@ exports.login = async (req, res) => {
       success: true,
       message: 'Login successful',
       token,
-      user
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        designation: user.designation,
+        mobile: user.mobile,
+        isActive: user.isActive,
+        status: user.status,
+        mustChangePassword: !!user.mustChangePassword
+      }
     });
   } catch (error) {
     console.error(error);
@@ -63,10 +73,10 @@ exports.login = async (req, res) => {
 // @access  Private/Super Admin (and seed script)
 exports.register = async (req, res) => {
   try {
-    const { name, email, password, role } = req.body;
+    const { name, email, password, role, designation, mobile } = req.body;
 
     // Check if user already exists
-    const userExists = await User.findOne({ email });
+    const userExists = await User.findOne({ email: email?.toLowerCase().trim() });
 
     if (userExists) {
       return res.status(400).json({ success: false, message: 'User already exists' });
@@ -77,7 +87,11 @@ exports.register = async (req, res) => {
       name,
       email,
       password,
-      role
+      role,
+      designation,
+      mobile,
+      isActive: true,
+      status: 'Active'
     });
 
     if (user) {
@@ -89,7 +103,11 @@ exports.register = async (req, res) => {
           name: user.name,
           email: user.email,
           role: user.role,
-          status: user.status
+          designation: user.designation,
+          mobile: user.mobile,
+          isActive: user.isActive,
+          status: user.status,
+          mustChangePassword: user.mustChangePassword
         }
       });
     } else {
@@ -101,12 +119,111 @@ exports.register = async (req, res) => {
   }
 };
 
+// @desc    Change user password (mandatory or self-service)
+// @route   POST /api/auth/change-password
+// @access  Private
+exports.changePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword, confirmPassword } = req.body;
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide current password, new password, and confirmation password.'
+      });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'New password and confirmation password do not match.'
+      });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'New password must be at least 6 characters long.'
+      });
+    }
+
+    const user = await User.findById(req.user.id).select('+password');
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // Verify current password
+    const isCurrentMatch = await user.matchPassword(currentPassword);
+    if (!isCurrentMatch) {
+      return res.status(400).json({
+        success: false,
+        message: 'Current password is incorrect.'
+      });
+    }
+
+    // Validate new password is not the user's initial mobile-number password
+    if (user.mobile && newPassword.trim() === user.mobile.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'New password must be different from the initial mobile-number password.'
+      });
+    }
+
+    // Ensure new password is different from current password
+    if (currentPassword === newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'New password must be different from the current password.'
+      });
+    }
+
+    // Update password and clear mustChangePassword
+    user.password = newPassword;
+    user.mustChangePassword = false;
+    await user.save();
+
+    user.password = undefined;
+
+    res.status(200).json({
+      success: true,
+      message: 'Password changed successfully.',
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        designation: user.designation,
+        mobile: user.mobile,
+        isActive: user.isActive,
+        status: user.status,
+        mustChangePassword: false
+      }
+    });
+  } catch (error) {
+    console.error('Change password error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// @desc    Logout user
+// @route   POST /api/auth/logout
+// @access  Public / Private
+exports.logout = async (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'Logged out successfully'
+  });
+};
+
 // @desc    Get current logged in user
 // @route   GET /api/auth/me
 // @access  Private
 exports.getMe = async (req, res) => {
   try {
     const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
     res.status(200).json({
       success: true,
       data: user
