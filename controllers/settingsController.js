@@ -49,7 +49,12 @@ exports.updateSettings = async (req, res) => {
       'leadSources',
       'leadPriorities',
       'assignmentMethod',
-      'assignmentRules'
+      'assignmentRules',
+      'googleCustomerId',
+      'googleConversionAction',
+      'googleConversionValue',
+      'googleConversionCurrency',
+      'googleDeveloperToken'
     ];
 
     fieldsToUpdate.forEach((field) => {
@@ -98,6 +103,35 @@ exports.regenerateApiKey = async (req, res) => {
     });
 
     res.status(200).json({ success: true, message: 'Website API key regenerated', apiKey: newKey });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// @desc    Regenerate Google Webhook Key
+// @route   POST /api/settings/regenerate-google-key
+// @access  Private/Super Admin
+exports.regenerateGoogleKey = async (req, res) => {
+  try {
+    let settings = await CRMSettings.findOne();
+    if (!settings) {
+      settings = await CRMSettings.create({});
+    }
+
+    const newKey = crypto.randomBytes(24).toString('hex');
+    settings.googleWebhookKey = newKey;
+    await settings.save();
+
+    await AuditLog.create({
+      user: req.user.id,
+      action: 'Settings Changed',
+      entity: 'Settings',
+      entityId: settings._id.toString(),
+      details: 'Google Ads Webhook key regenerated'
+    });
+
+    res.status(200).json({ success: true, message: 'Google Ads Webhook key regenerated', googleWebhookKey: newKey });
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, message: 'Server error' });

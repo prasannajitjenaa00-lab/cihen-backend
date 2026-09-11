@@ -58,7 +58,7 @@ const LeadSchema = new mongoose.Schema(
     },
     leadSource: {
       type: String,
-      enum: ['Facebook', 'Instagram', 'Website', 'Google', 'WhatsApp', 'Manual', 'Referral'],
+      enum: ['Facebook', 'Instagram', 'Website', 'Google', 'Google Ads', 'WhatsApp', 'Manual', 'Referral'],
       default: 'Manual',
       index: true
     },
@@ -86,6 +86,58 @@ const LeadSchema = new mongoose.Schema(
       type: String
     },
     metaFormId: {
+      type: String
+    },
+    // Google Ads Attribution Fields
+    googleLeadId: {
+      type: String,
+      unique: true,
+      sparse: true,
+      index: true
+    },
+    gclid: {
+      type: String,
+      index: true
+    },
+    gbraid: {
+      type: String,
+      index: true
+    },
+    wbraid: {
+      type: String,
+      index: true
+    },
+    googleCampaignId: {
+      type: String
+    },
+    googleCampaignName: {
+      type: String
+    },
+    googleAdGroupId: {
+      type: String
+    },
+    googleAdGroupName: {
+      type: String
+    },
+    googleCreativeId: {
+      type: String
+    },
+    googleFormId: {
+      type: String
+    },
+    utmSource: {
+      type: String
+    },
+    utmMedium: {
+      type: String
+    },
+    utmCampaign: {
+      type: String
+    },
+    utmTerm: {
+      type: String
+    },
+    utmContent: {
       type: String
     },
     assignedCounsellor: {

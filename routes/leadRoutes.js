@@ -26,9 +26,9 @@ router.route('/:id')
   .delete(authorizeRoles('Super Admin'), deleteLead);
 
 router.post('/:id/assign', authorizeRoles('Super Admin', 'Admin'), assignLead);
-router.post('/:id/notes', addNote);
-router.post('/:id/followups', scheduleFollowUp);
-router.post('/:id/calls', logCall);
+router.post('/:id/notes', authorizeRoles('Counsellor'), addNote);
+router.post('/:id/followups', authorizeRoles('Counsellor'), scheduleFollowUp);
+router.post('/:id/calls', authorizeRoles('Counsellor'), logCall);
 router.post('/:id/resolve-duplicate', authorizeRoles('Super Admin', 'Admin'), resolveDuplicate);
 
 module.exports = router;

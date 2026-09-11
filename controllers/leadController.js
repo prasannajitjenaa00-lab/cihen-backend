@@ -122,7 +122,8 @@ exports.getLead = async (req, res) => {
     }
 
     // Role-based authorization
-    if (req.user.role === 'Counsellor' && lead.assignedCounsellor?.toString() !== req.user.id) {
+    const counsellorId = lead.assignedCounsellor?._id || lead.assignedCounsellor;
+    if (req.user.role === 'Counsellor' && counsellorId?.toString() !== req.user.id) {
       return res.status(403).json({ success: false, message: 'Not authorized to view this lead' });
     }
 
@@ -187,7 +188,8 @@ exports.updateLead = async (req, res) => {
     }
 
     // Role-based authorization
-    if (req.user.role === 'Counsellor' && lead.assignedCounsellor?.toString() !== req.user.id) {
+    const counsellorId = lead.assignedCounsellor?._id || lead.assignedCounsellor;
+    if (req.user.role === 'Counsellor' && counsellorId?.toString() !== req.user.id) {
       return res.status(403).json({ success: false, message: 'Not authorized to edit this lead' });
     }
 

@@ -13,12 +13,20 @@ const normalizePhone = (phone) => {
 };
 
 // Check for duplicates
-const checkDuplicate = async (phone, email, metaLeadId) => {
+const checkDuplicate = async (phone, email, metaLeadId, googleLeadId) => {
   // 1. Check Meta Lead ID
   if (metaLeadId) {
     const existingMetaLead = await Lead.findOne({ metaLeadId });
     if (existingMetaLead) {
       return { duplicate: true, action: 'skip', lead: existingMetaLead };
+    }
+  }
+
+  // 1b. Check Google Lead ID
+  if (googleLeadId) {
+    const existingGoogleLead = await Lead.findOne({ googleLeadId });
+    if (existingGoogleLead) {
+      return { duplicate: true, action: 'skip', lead: existingGoogleLead };
     }
   }
 
@@ -128,10 +136,11 @@ const pickRoundRobin = async (counsellors) => {
 // Create lead with duplicate check and auto assignment
 const createProcessedLead = async (leadData, userTriggered = null) => {
   // Check for duplicates
-  const dupCheck = await checkDuplicate(leadData.phone, leadData.email, leadData.metaLeadId);
+  const dupCheck = await checkDuplicate(leadData.phone, leadData.email, leadData.metaLeadId, leadData.googleLeadId);
 
   if (dupCheck.duplicate && dupCheck.action === 'skip') {
-    console.log(`Lead with Meta Lead ID ${leadData.metaLeadId} already exists. Skipping.`);
+    const id = leadData.metaLeadId ? `Meta Lead ID ${leadData.metaLeadId}` : `Google Lead ID ${leadData.googleLeadId}`;
+    console.log(`Lead with ${id} already exists. Skipping.`);
     return dupCheck.lead;
   }
 

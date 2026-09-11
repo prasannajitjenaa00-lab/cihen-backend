@@ -13,6 +13,7 @@ const followUpRoutes = require('./routes/followUpRoutes');
 const admissionRoutes = require('./routes/admissionRoutes');
 const studentRoutes = require('./routes/studentRoutes');
 const settingsRoutes = require('./routes/settingsRoutes');
+const googleRoutes = require('./routes/googleRoutes');
 
 const app = express();
 
@@ -47,6 +48,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/leads', leadRoutes);
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/meta', metaRoutes);
+app.use('/api/google', googleRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/followups', followUpRoutes);
 app.use('/api/admissions', admissionRoutes);

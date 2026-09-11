@@ -259,7 +259,24 @@ exports.ingestWebsiteLead = async (req, res) => {
       return res.status(401).json({ success: false, message: 'Invalid API Key' });
     }
 
-    const { studentName, parentName, phone, email, classInterested, academicYear } = req.body;
+    const {
+      studentName,
+      parentName,
+      phone,
+      email,
+      classInterested,
+      academicYear,
+      leadSource,
+      campaign,
+      gclid,
+      gbraid,
+      wbraid,
+      utm_source,
+      utm_medium,
+      utm_campaign,
+      utm_term,
+      utm_content
+    } = req.body;
 
     if (!studentName || !parentName || !phone || !classInterested) {
       return res.status(400).json({
@@ -268,6 +285,13 @@ exports.ingestWebsiteLead = async (req, res) => {
       });
     }
 
+    // Determine lead source: if coming with gclid or utm_source google, attribute to 'Google Ads'
+    const resolvedSource =
+      leadSource ||
+      (gclid || gbraid || wbraid || utm_source === 'google' || utm_medium === 'cpc'
+        ? 'Google Ads'
+        : 'Website');
+
     const leadData = {
       studentName,
       parentName,
@@ -275,8 +299,17 @@ exports.ingestWebsiteLead = async (req, res) => {
       email,
       classInterested,
       academicYear: academicYear || '2026-2027',
-      leadSource: 'Website',
-      platform: 'website'
+      leadSource: resolvedSource,
+      platform: resolvedSource === 'Google Ads' ? 'google' : 'website',
+      campaign: campaign || utm_campaign || '',
+      gclid: gclid || '',
+      gbraid: gbraid || '',
+      wbraid: wbraid || '',
+      utmSource: utm_source || '',
+      utmMedium: utm_medium || '',
+      utmCampaign: utm_campaign || '',
+      utmTerm: utm_term || '',
+      utmContent: utm_content || ''
     };
 
     const lead = await createProcessedLead(leadData, null);

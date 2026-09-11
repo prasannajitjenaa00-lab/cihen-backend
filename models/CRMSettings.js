@@ -43,7 +43,7 @@ const CRMSettingsSchema = new mongoose.Schema(
     },
     leadSources: {
       type: [String],
-      default: ['Facebook', 'Instagram', 'Website', 'Google', 'WhatsApp', 'Manual', 'Referral']
+      default: ['Facebook', 'Instagram', 'Website', 'Google', 'Google Ads', 'WhatsApp', 'Manual', 'Referral']
     },
     leadPriorities: {
       type: [String],
@@ -72,6 +72,42 @@ const CRMSettingsSchema = new mongoose.Schema(
     websiteApiKey: {
       type: String,
       default: 'cohen_website_secret_api_key_2026'
+    },
+    googleWebhookKey: {
+      type: String,
+      default: () => require('crypto').randomBytes(24).toString('hex')
+    },
+    googleCustomerId: {
+      type: String,
+      default: ''
+    },
+    googleConversionAction: {
+      type: String,
+      default: 'School Admission'
+    },
+    googleConversionValue: {
+      type: Number,
+      default: 5000
+    },
+    googleConversionCurrency: {
+      type: String,
+      default: 'INR'
+    },
+    googleDeveloperToken: {
+      type: String,
+      default: ''
+    },
+    googleClientId: {
+      type: String,
+      default: ''
+    },
+    googleClientSecret: {
+      type: String,
+      default: ''
+    },
+    googleRefreshToken: {
+      type: String,
+      default: ''
     }
   },
   { timestamps: true }

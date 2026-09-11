@@ -4,6 +4,7 @@ const {
   getSettings,
   updateSettings,
   regenerateApiKey,
+  regenerateGoogleKey,
   getUsers,
   createUser,
   updateUser,
@@ -20,6 +21,7 @@ router.route('/')
   .put(authorizeRoles('Super Admin'), updateSettings);
 
 router.post('/regenerate-api-key', authorizeRoles('Super Admin'), regenerateApiKey);
+router.post('/regenerate-google-key', authorizeRoles('Super Admin'), regenerateGoogleKey);
 
 router.route('/users')
   .get(getUsers)
